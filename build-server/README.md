@@ -2,20 +2,66 @@
 
 A containerized build service that clones projects, builds them, and uploads the build artifacts to AWS S3.
 
+---
+
 ## Overview
 
-This build server is designed to automate the process of building web applications and deploying them to an AWS S3 bucket. It:
+This build server automates the process of building web applications and deploying them to AWS. It:
 
 1. Clones a Git repository specified via environment variables
 2. Installs dependencies using npm
 3. Runs the build process
 4. Uploads the built artifacts to an AWS S3 bucket
 
+---
+
+## AWS Constructs Involved
+
+To provide a clearer picture of how the build service integrates with AWS, the following constructs are involved:
+
+1. **Amazon Elastic Container Service (ECS)**
+
+   - Hosts the Dockerized build server.
+   - ECS task definitions define the container runtime settings.
+   - ECS (with Fargate launch type) executes the build process without needing to manage servers.
+
+2. **Amazon Elastic Container Registry (ECR)**
+
+   - Stores and manages Docker container images.
+   - Provides a secure, scalable, and reliable registry for the build server image.
+   - Integrates with IAM for access control and ECS for container deployment.
+
+3. **Amazon S3**
+
+   - Stores the final build artifacts.
+   - Artifacts are uploaded to a specific folder path (`builds/{PROJECT_ID}/`).
+
+4. **VPC (Virtual Private Cloud)**
+
+   - Provides an isolated network environment where ECS tasks run.
+   - Includes:
+     - **Subnet(s):** Logical subdivisions of the VPC.
+     - **Internet Gateway:** Allows ECS tasks to access external resources (e.g., GitHub).
+
+5. **IAM (Identity and Access Management)**
+
+   - Controls access and permissions.
+   - The ECS task uses an **execution role** with permissions to:
+     - Pull container images from ECR (if needed).
+     - Upload artifacts to S3.
+
+6. **Amazon CLI (AWS CLI)**
+   - Used locally to manage AWS resources, push Docker images, and test S3 uploads.
+
+---
+
 ## Prerequisites
 
-- Docker
-- AWS account with S3 bucket and appropriate permissions
+- Docker installed locally
+- AWS account with ECS, S3, IAM, and VPC configured
 - Git repository containing a Node.js project with a build script
+
+---
 
 ## Environment Variables
 
@@ -25,10 +71,12 @@ The build server requires the following environment variables:
 | ----------------------- | ---------------------------------------------------- |
 | `GIT_REPO_URL`          | URL of the Git repository to clone                   |
 | `PROJECT_ID`            | Unique identifier for the project (used for S3 path) |
-| `AWS_REGION`            | AWS region (e.g., 'ap-south-1')                      |
+| `AWS_REGION`            | AWS region (e.g., `ap-south-1`)                      |
 | `AWS_ACCESS_KEY_ID`     | AWS access key with permissions to write to S3       |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key paired with the access key            |
 | `AWS_S3_BUCKET_NAME`    | Name of the S3 bucket to upload builds to            |
+
+---
 
 ## Docker Image
 
@@ -40,6 +88,8 @@ The Docker image is based on Ubuntu focal and includes:
   - @aws-sdk/client-s3
   - mime-types
 
+---
+
 ## Usage
 
 ### Building the Docker Image
@@ -49,34 +99,15 @@ cd build-server
 docker build -t ship-flow-builder .
 ```
 
-### Running the Container
+### Pushing to AWS ECR
 
 ```bash
-docker run -d \
-  -e GIT_REPO_URL="https://github.com/username/repo.git" \
-  -e PROJECT_ID="my-project" \
-  -e AWS_REGION="ap-south-1" \
-  -e AWS_ACCESS_KEY_ID="your-access-key" \
-  -e AWS_SECRET_ACCESS_KEY="your-secret-key" \
-  -e AWS_S3_BUCKET_NAME="your-bucket-name" \
-  ship-flow-builder
+# Authenticate Docker to your ECR registry
+aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+# Tag the image for ECR
+docker tag ship-flow-builder:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/ship-flow-builder:latest
+
+# Push the image to ECR
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/ship-flow-builder:latest
 ```
-
-## How It Works
-
-1. The container starts by running `main.sh`
-2. `main.sh` clones the Git repository to `/home/app/output`
-3. `script.js` is executed, which:
-   - Runs `npm install` and `npm run build` in the cloned repository
-   - Uploads all files from the `dist` directory to the S3 bucket
-   - Files are uploaded to `builds/{PROJECT_ID}/{filepath}` in the bucket
-
-## Troubleshooting
-
-- Ensure the Git repository is accessible
-- Verify that AWS credentials have proper S3 permissions
-- Check that the target repository has a valid `package.json` with a build script
-
-## Security Notice
-
-Never commit AWS credentials to your repository. Always provide them through environment variables or a secure secrets management system.
